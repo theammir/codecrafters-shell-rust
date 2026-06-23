@@ -87,7 +87,7 @@ impl Execute for BuiltinCommandBody {
                 };
                 let command = Command::from_str(command_str).unwrap();
                 match command {
-                    Command::Builtin(..) => println!("{command_str} is a shell built-in"),
+                    Command::Builtin(..) => println!("{command_str} is a shell builtin"),
                     Command::Executable(..) => println!("{command_str}: not found"),
                 }
                 0
