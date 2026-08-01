@@ -1,8 +1,13 @@
 use std::{
+    ffi::{OsStr, OsString},
     io::{self, Write},
     path::PathBuf,
     str::FromStr,
 };
+
+use crate::is_executable::IsExecutable;
+
+mod is_executable;
 
 pub enum Command {
     Builtin(BuiltinCommandBody),
@@ -88,7 +93,36 @@ impl Execute for BuiltinCommandBody {
                 let command = Command::from_str(command_str).unwrap();
                 match command {
                     Command::Builtin(..) => println!("{command_str} is a shell builtin"),
-                    Command::Executable(..) => println!("{command_str}: not found"),
+                    Command::Executable(body) => {
+                        if body.executable_path.is_absolute() {
+                            println!("{command_str} is {}", body.executable_path.display());
+                            return 0;
+                        }
+                        let path_env = std::env::var_os("PATH").unwrap_or_default();
+                        let paths = std::env::split_paths(&path_env);
+
+                        // NOTE: are symlinks ok anywhere in PATH resolution as far as we're
+                        // concerned?
+                        let executable =
+                            paths
+                                .filter(|p| p.is_dir() && p.is_absolute())
+                                .find_map(|p_dir| {
+                                    std::fs::read_dir(p_dir).ok()?.find_map(|file| {
+                                        let path = file.ok()?.path();
+                                        (path.is_file()
+                                            && path.is_executable()
+                                            && path
+                                                .file_name()
+                                                .is_some_and(|n| n == OsStr::new(command_str)))
+                                        .then_some(path)
+                                    })
+                                });
+
+                        match executable {
+                            Some(path) => println!("{command_str} is {}", path.display()),
+                            None => println!("{command_str}: not found"),
+                        }
+                    }
                 }
                 0
             }
