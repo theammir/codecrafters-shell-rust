@@ -1,3 +1,5 @@
+//! `crates.io/crates/is_executable` 1.0.6 but I own the file
+
 #[cfg(target_os = "windows")]
 extern crate windows_sys;
 
@@ -34,9 +36,8 @@ mod unix {
 
     impl IsExecutable for Path {
         fn is_executable(&self) -> bool {
-            let metadata = match self.metadata() {
-                Ok(metadata) => metadata,
-                Err(_) => return false,
+            let Ok(metadata) = self.metadata() else {
+                return false;
             };
             let permissions = metadata.permissions();
             metadata.is_file() && permissions.mode() & 0o111 != 0

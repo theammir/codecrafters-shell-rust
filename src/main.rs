@@ -1,13 +1,12 @@
 use std::{
-    ffi::{OsStr, OsString},
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
 use crate::is_executable::IsExecutable;
 
-mod is_executable;
+pub mod is_executable;
 
 pub enum Command {
     Builtin(BuiltinCommandBody),
@@ -33,14 +32,44 @@ impl FromStr for BuiltinCommand {
     }
 }
 
+// TODO: consider `OsString`s for everything
+
 pub struct BuiltinCommandBody {
     pub cmd_type: BuiltinCommand,
     pub arguments: Vec<String>,
 }
 
 pub struct ExecutableCommandBody {
-    pub executable_path: PathBuf,
+    /// Path to the executable, resolved from PATH, system root or the current directory.
+    /// Intentionally not canonicalized, so might be relative to cwd or contain symlinks.
+    /// `None` if the actual executable wasn't found anywhere.
+    pub executable_path: Option<PathBuf>,
     pub arguments: Vec<String>,
+}
+
+fn resolve_executable_path(path: &Path) -> Option<PathBuf> {
+    if path.is_absolute() || path.starts_with("./") {
+        if path.is_executable() {
+            return Some(path.to_owned());
+        }
+        return None;
+    }
+
+    let executable_name = path.file_name()?;
+    let path_env = std::env::var_os("PATH").unwrap_or_default();
+    let paths = std::env::split_paths(&path_env);
+
+    paths
+        .filter(|p| p.is_dir() && p.is_absolute())
+        .find_map(|p_dir| {
+            std::fs::read_dir(p_dir).ok()?.find_map(|file| {
+                let path = file.ok()?.path();
+                (path.is_file()
+                    && path.is_executable()
+                    && path.file_name().is_some_and(|n| n == executable_name))
+                .then_some(path)
+            })
+        })
 }
 
 impl FromStr for Command {
@@ -58,7 +87,7 @@ impl FromStr for Command {
             }))
         } else {
             Ok(Command::Executable(ExecutableCommandBody {
-                executable_path: PathBuf::from(executable),
+                executable_path: resolve_executable_path(Path::new(executable)),
                 arguments,
             }))
         }
@@ -93,36 +122,10 @@ impl Execute for BuiltinCommandBody {
                 let command = Command::from_str(command_str).unwrap();
                 match command {
                     Command::Builtin(..) => println!("{command_str} is a shell builtin"),
-                    Command::Executable(body) => {
-                        if body.executable_path.is_absolute() {
-                            println!("{command_str} is {}", body.executable_path.display());
-                            return 0;
-                        }
-                        let path_env = std::env::var_os("PATH").unwrap_or_default();
-                        let paths = std::env::split_paths(&path_env);
-
-                        // NOTE: are symlinks ok anywhere in PATH resolution as far as we're
-                        // concerned?
-                        let executable =
-                            paths
-                                .filter(|p| p.is_dir() && p.is_absolute())
-                                .find_map(|p_dir| {
-                                    std::fs::read_dir(p_dir).ok()?.find_map(|file| {
-                                        let path = file.ok()?.path();
-                                        (path.is_file()
-                                            && path.is_executable()
-                                            && path
-                                                .file_name()
-                                                .is_some_and(|n| n == OsStr::new(command_str)))
-                                        .then_some(path)
-                                    })
-                                });
-
-                        match executable {
-                            Some(path) => println!("{command_str} is {}", path.display()),
-                            None => println!("{command_str}: not found"),
-                        }
-                    }
+                    Command::Executable(body) => match body.executable_path {
+                        Some(path) => println!("{command_str} is {}", path.display()),
+                        None => println!("{command_str}: not found"),
+                    },
                 }
                 0
             }
@@ -134,9 +137,28 @@ impl Execute for Command {
     fn execute(&self) -> i8 {
         match self {
             Self::Builtin(body) => body.execute(),
-            Self::Executable(body) => {
-                println!("{}: command not found", body.arguments.first().unwrap());
+            Self::Executable(ExecutableCommandBody {
+                executable_path: None,
+                arguments,
+            }) => {
+                println!("{}: command not found", arguments.first().unwrap());
                 0
+            }
+            Self::Executable(ExecutableCommandBody {
+                executable_path: Some(executable_path),
+                arguments,
+            }) => {
+                let mut command = std::process::Command::new(executable_path);
+                command.args(arguments.iter().skip(1));
+                let handle = command
+                    .spawn()
+                    .unwrap_or_else(|_| panic!("failed to spawn \"{}\"", arguments[0]));
+                let output = handle.wait_with_output().unwrap();
+
+                // NOTE: doesn't handle signal termination
+                #[allow(clippy::cast_possible_truncation)] // unix behaviour anyway
+                let code = output.status.code().unwrap_or_default() as i8;
+                code
             }
         }
     }
