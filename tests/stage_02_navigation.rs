@@ -17,7 +17,7 @@ mod navigation_01_ei0 {
         let sandbox = Sandbox::new();
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
-        shell.expect_command("pwd", &canonical(&sandbox.cwd()));
+        shell.expect_command("pwd", &sandbox.cwd().display().to_string());
     }
 
     // --- additional ---
@@ -40,7 +40,7 @@ mod navigation_01_ei0 {
     fn pwd_is_stable_across_invocations() {
         // Nothing changed the directory, so the answer must not drift.
         let sandbox = Sandbox::new();
-        let expected = canonical(&sandbox.cwd());
+        let expected = sandbox.cwd().display().to_string();
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("pwd", &expected);
@@ -54,7 +54,7 @@ mod navigation_01_ei0 {
         let nested = sandbox.mkdir("cwd/one/two/three");
         let mut shell = Session::spawn_in(&sandbox, &nested);
         shell.expect_prompt();
-        shell.expect_command("pwd", &canonical(&nested));
+        shell.expect_command("pwd", &nested.display().to_string());
     }
 }
 
@@ -71,7 +71,7 @@ mod navigation_02_ra6 {
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command(&format!("cd {}", target.display()), "");
-        shell.expect_command("pwd", &canonical(&target));
+        shell.expect_command("pwd", &target.display().to_string());
     }
 
     #[test]
@@ -90,7 +90,7 @@ mod navigation_02_ra6 {
     fn a_failed_cd_leaves_the_directory_unchanged() {
         let sandbox = Sandbox::new();
         let missing = sandbox.root().join("does_not_exist");
-        let start = canonical(&sandbox.cwd());
+        let start = sandbox.cwd().display().to_string();
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command(
@@ -121,9 +121,9 @@ mod navigation_02_ra6 {
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command(&format!("cd {}", first.display()), "");
-        shell.expect_command("pwd", &canonical(&first));
+        shell.expect_command("pwd", &first.display().to_string());
         shell.expect_command(&format!("cd {}", second.display()), "");
-        shell.expect_command("pwd", &canonical(&second));
+        shell.expect_command("pwd", &second.display().to_string());
     }
 
     #[test]
@@ -167,7 +167,7 @@ mod navigation_03_gq9 {
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("cd ./local/bin", "");
-        shell.expect_command("pwd", &canonical(&target));
+        shell.expect_command("pwd", &target.display().to_string());
     }
 
     #[test]
@@ -178,7 +178,7 @@ mod navigation_03_gq9 {
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("cd local", "");
-        shell.expect_command("pwd", &canonical(&target));
+        shell.expect_command("pwd", &target.display().to_string());
     }
 
     #[test]
@@ -188,13 +188,13 @@ mod navigation_03_gq9 {
         let mut shell = Session::spawn_in(&sandbox, &start);
         shell.expect_prompt();
         shell.expect_command("cd ../../", "");
-        shell.expect_command("pwd", &canonical(&sandbox.cwd()));
+        shell.expect_command("pwd", &sandbox.cwd().display().to_string());
     }
 
     #[test]
     fn cd_to_dot_stays_put() {
         let sandbox = Sandbox::new();
-        let start = canonical(&sandbox.cwd());
+        let start = sandbox.cwd().display().to_string();
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("cd ./", "");
@@ -212,7 +212,7 @@ mod navigation_03_gq9 {
     #[test]
     fn a_failed_relative_cd_leaves_the_directory_unchanged() {
         let sandbox = Sandbox::new();
-        let start = canonical(&sandbox.cwd());
+        let start = sandbox.cwd().display().to_string();
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("cd ./missing", "cd: ./missing: No such file or directory");
@@ -231,7 +231,7 @@ mod navigation_03_gq9 {
         shell.expect_command("cd a", "");
         shell.expect_command("cd b", "");
         shell.expect_command("cd c", "");
-        shell.expect_command("pwd", &canonical(&sandbox.cwd().join("a/b/c")));
+        shell.expect_command("pwd", &sandbox.cwd().join("a/b/c").display().to_string());
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod navigation_03_gq9 {
         let mut shell = Session::spawn_in(&sandbox, &start);
         shell.expect_prompt();
         shell.expect_command("cd ../../right", "");
-        shell.expect_command("pwd", &canonical(&sandbox.cwd().join("right")));
+        shell.expect_command("pwd", &sandbox.cwd().join("right").display().to_string());
     }
 
     #[test]
@@ -253,7 +253,72 @@ mod navigation_03_gq9 {
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("cd withslash/", "");
-        shell.expect_command("pwd", &canonical(&target));
+        shell.expect_command("pwd", &target.display().to_string());
+    }
+
+    #[test]
+    fn cd_into_a_symlinked_directory_lands_in_that_directory() {
+        // Symlinked directories are everywhere in practice. Shells differ in
+        // whether `pwd` then reports the link path or the resolved path (bash
+        // tracks a logical PWD; a shell built on getcwd reports the physical
+        // one), and no stage picks a side, so this asserts only that the shell
+        // ended up in the right directory by either name.
+        let sandbox = Sandbox::new();
+        let real = sandbox.mkdir("cwd/real_target");
+        let link = sandbox.symlink(&real, "cwd/link_to_target");
+
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command("cd link_to_target", "");
+        shell.send_line("pwd");
+        shell.read_until("\n");
+        let reported = shell.read_until_prompt();
+
+        assert_eq!(
+            std::fs::canonicalize(&reported).ok(),
+            std::fs::canonicalize(&real).ok(),
+            "pwd reported {reported:?}, which is neither {} nor {}",
+            link.display(),
+            real.display()
+        );
+    }
+
+    #[test]
+    fn a_symlinked_directory_can_be_left_again() {
+        // Whichever convention the shell uses for `pwd`, leaving a symlinked
+        // directory must reach a real directory and not strand the shell.
+        let sandbox = Sandbox::new();
+        let real = sandbox.mkdir("cwd/real_target");
+        sandbox.symlink(&real, "cwd/link_to_target");
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command("cd link_to_target", "");
+        shell.expect_command("cd ..", "");
+        shell.send_line("pwd");
+        shell.read_until("\n");
+        let reported = shell.read_until_prompt();
+        assert!(
+            std::fs::canonicalize(&reported).is_ok(),
+            "pwd reported {reported:?}, which is not an existing directory"
+        );
+        shell.expect_alive();
+    }
+
+    #[test]
+    fn cd_through_a_symlink_to_a_missing_target_reports_an_error() {
+        // A dangling symlink is not a directory, so `cd` must fail the same way
+        // it fails for a name that does not exist at all.
+        let sandbox = Sandbox::new();
+        sandbox.symlink(sandbox.root().join("no_such_dir"), "cwd/broken_link");
+        let start = sandbox.cwd().display().to_string();
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command(
+            "cd broken_link",
+            "cd: broken_link: No such file or directory",
+        );
+        shell.expect_command("pwd", &start);
+        shell.expect_alive();
     }
 }
 
@@ -269,7 +334,7 @@ mod navigation_04_gp4 {
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("cd ~", "");
-        shell.expect_command("pwd", &canonical(&sandbox.home()));
+        shell.expect_command("pwd", &sandbox.home().display().to_string());
     }
 
     #[test]
@@ -283,7 +348,7 @@ mod navigation_04_gp4 {
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("cd ~", "");
-        shell.expect_command("pwd", &canonical(&custom));
+        shell.expect_command("pwd", &custom.display().to_string());
     }
 
     #[test]
@@ -293,9 +358,9 @@ mod navigation_04_gp4 {
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command(&format!("cd {}", elsewhere.display()), "");
-        shell.expect_command("pwd", &canonical(&elsewhere));
+        shell.expect_command("pwd", &elsewhere.display().to_string());
         shell.expect_command("cd ~", "");
-        shell.expect_command("pwd", &canonical(&sandbox.home()));
+        shell.expect_command("pwd", &sandbox.home().display().to_string());
     }
 
     // --- additional ---
@@ -312,7 +377,7 @@ mod navigation_04_gp4 {
     fn cd_tilde_can_be_repeated() {
         let sandbox = Sandbox::new();
         let elsewhere = sandbox.mkdir("elsewhere");
-        let home = canonical(&sandbox.home());
+        let home = sandbox.home().display().to_string();
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("cd ~", "");
@@ -321,17 +386,4 @@ mod navigation_04_gp4 {
         shell.expect_command("cd ~", "");
         shell.expect_command("pwd", &home);
     }
-}
-
-/// The path as the operating system reports it.
-///
-/// On macOS the temp directory is reached through a `/var` -> `/private/var`
-/// symlink, so the path handed to the shell and the path `pwd` prints are not
-/// textually equal. Canonicalizing the expectation compares the directory the
-/// shell actually landed in, which is what the stage is about.
-fn canonical(path: &std::path::Path) -> String {
-    std::fs::canonicalize(path)
-        .unwrap_or_else(|err| panic!("failed to canonicalize {}: {err}", path.display()))
-        .display()
-        .to_string()
 }

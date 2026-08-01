@@ -10,7 +10,11 @@ use tempfile::TempDir;
 
 /// An isolated world for one shell session.
 pub struct Sandbox {
-    root: TempDir,
+    /// Owns cleanup. The path it reports may contain symlinks (macOS hands out
+    /// `/var/folders/...`, which is really `/private/var/folders/...`).
+    _tempdir: TempDir,
+    /// The sandbox root with every symlink resolved.
+    root: PathBuf,
     env: BTreeMap<String, String>,
 }
 
@@ -18,47 +22,60 @@ impl Sandbox {
     /// Create a sandbox with an empty cwd, an empty `HOME`, and a `PATH`
     /// containing a single empty directory.
     ///
+    /// The root is canonicalized so that the paths handed to the shell are
+    /// physical ones. Otherwise the suite would silently depend on `TMPDIR`:
+    /// on macOS the default temp dir is reached through a symlink, so `getcwd`
+    /// reports a different string than the one the sandbox handed out, and
+    /// tests would pass or fail based on the ambient environment rather than on
+    /// the shell. Symlink behaviour is worth testing, but on purpose — see
+    /// [`Sandbox::symlink`].
+    ///
     /// `PATH` deliberately excludes the real system directories: a test that
     /// needs `ls` should install a fake one, so its expectations cannot drift
     /// with whatever happens to be installed on the machine.
     pub fn new() -> Self {
-        let root = tempfile::Builder::new()
+        let tempdir = tempfile::Builder::new()
             .prefix("shell-test-")
             .tempdir()
             .expect("failed to create sandbox");
+        let root = std::fs::canonicalize(tempdir.path()).expect("failed to canonicalize sandbox");
 
         for dir in ["cwd", "home", "bin"] {
-            std::fs::create_dir_all(root.path().join(dir)).expect("failed to create sandbox dir");
+            std::fs::create_dir_all(root.join(dir)).expect("failed to create sandbox dir");
         }
 
         let mut env = BTreeMap::new();
-        env.insert("HOME".to_string(), path_str(&root.path().join("home")));
-        env.insert("PATH".to_string(), path_str(&root.path().join("bin")));
+        env.insert("HOME".to_string(), path_str(&root.join("home")));
+        env.insert("PATH".to_string(), path_str(&root.join("bin")));
         // Keep the shell's own line editing predictable regardless of the
         // developer's terminal.
         env.insert("TERM".to_string(), "dumb".to_string());
 
-        Self { root, env }
+        Self {
+            _tempdir: tempdir,
+            root,
+            env,
+        }
     }
 
     /// The directory the shell starts in.
     pub fn cwd(&self) -> PathBuf {
-        self.root.path().join("cwd")
+        self.root.join("cwd")
     }
 
     /// The sandbox `HOME`.
     pub fn home(&self) -> PathBuf {
-        self.root.path().join("home")
+        self.root.join("home")
     }
 
     /// The single directory on the sandbox `PATH`.
     pub fn bin(&self) -> PathBuf {
-        self.root.path().join("bin")
+        self.root.join("bin")
     }
 
-    /// The sandbox root. Useful for asserting on absolute paths.
+    /// The sandbox root, with symlinks resolved.
     pub fn root(&self) -> &Path {
-        self.root.path()
+        &self.root
     }
 
     /// The environment the shell is spawned with.
@@ -86,14 +103,31 @@ impl Sandbox {
 
     /// Create a directory under the sandbox root, parents included.
     pub fn mkdir(&self, relative: impl AsRef<Path>) -> PathBuf {
-        let path = self.root.path().join(relative);
+        let path = self.root.join(relative);
         std::fs::create_dir_all(&path).expect("failed to create directory");
         path
     }
 
+    /// Create a symlink at `link` (relative to the root) pointing at `target`,
+    /// and return the link's path.
+    ///
+    /// Symlinked directories are ordinary on real systems — `/tmp` and `/var`
+    /// are symlinks on macOS, and a Nix profile's `bin` is a symlink into the
+    /// store — so a shell meets them in both `PATH` and `cd` arguments. Tests
+    /// build them explicitly rather than relying on the ambient `TMPDIR`.
+    #[cfg(unix)]
+    pub fn symlink(&self, target: impl AsRef<Path>, link: impl AsRef<Path>) -> PathBuf {
+        let link_path = self.root.join(link);
+        if let Some(parent) = link_path.parent() {
+            std::fs::create_dir_all(parent).expect("failed to create parent directory");
+        }
+        std::os::unix::fs::symlink(target.as_ref(), &link_path).expect("failed to create symlink");
+        link_path
+    }
+
     /// Write a file under the sandbox root, creating parent directories.
     pub fn write_file(&self, relative: impl AsRef<Path>, contents: &str) -> PathBuf {
-        let path = self.root.path().join(relative);
+        let path = self.root.join(relative);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("failed to create parent directory");
         }
@@ -106,7 +140,7 @@ impl Sandbox {
     /// # Panics
     /// If the file does not exist.
     pub fn read_file(&self, relative: impl AsRef<Path>) -> String {
-        let path = self.root.path().join(relative);
+        let path = self.root.join(relative);
         std::fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
     }

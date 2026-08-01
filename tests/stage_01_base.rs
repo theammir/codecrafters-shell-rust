@@ -385,6 +385,88 @@ mod base_07_mg5 {
             &format!("nested_tool is {}", path.display()),
         );
     }
+
+    #[test]
+    fn type_reports_a_usable_path_when_the_path_entry_is_a_symlink() {
+        // Symlinked PATH entries are ordinary: /usr/bin is reached through one
+        // on macOS, and a Nix profile's bin is a symlink into the store.
+        //
+        // The stage says to print `<command> is <full_path>` without saying
+        // whether symlinks are resolved, so both the link path and the resolved
+        // path satisfy it. This asserts only what the stage does pin down: the
+        // reported path must be absolute and must actually be the executable.
+        let mut sandbox = Sandbox::new();
+        let real_dir = sandbox.mkdir("real/bin");
+        sandbox.install_executable_in(&real_dir, "linked_tool", "echo ran");
+        let link_dir = sandbox.symlink(&real_dir, "linkbin");
+        sandbox.push_path_dir(&link_dir);
+
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.send_line("type linked_tool");
+        shell.read_until("\n");
+        let output = shell.read_until_prompt();
+
+        let reported = output
+            .strip_prefix("linked_tool is ")
+            .unwrap_or_else(|| panic!("expected `linked_tool is <path>`, got {output:?}"));
+        assert_eq!(
+            std::fs::canonicalize(reported).ok(),
+            std::fs::canonicalize(real_dir.join("linked_tool")).ok(),
+            "reported path {reported:?} does not resolve to the installed executable"
+        );
+    }
+
+    #[test]
+    fn type_reports_a_usable_path_when_the_executable_is_a_symlink() {
+        // The PATH entry is a real directory, but the executable inside it is a
+        // symlink to a file elsewhere.
+        let sandbox = Sandbox::new();
+        let store = sandbox.mkdir("store");
+        let target = sandbox.install_executable_in(&store, "actual_tool", "echo ran");
+        sandbox.symlink(&target, "bin/aliased_tool");
+
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.send_line("type aliased_tool");
+        shell.read_until("\n");
+        let output = shell.read_until_prompt();
+
+        let reported = output
+            .strip_prefix("aliased_tool is ")
+            .unwrap_or_else(|| panic!("expected `aliased_tool is <path>`, got {output:?}"));
+        assert_eq!(
+            std::fs::canonicalize(reported).ok(),
+            std::fs::canonicalize(&target).ok(),
+            "reported path {reported:?} does not resolve to the installed executable"
+        );
+    }
+
+    #[test]
+    fn a_dangling_symlink_on_path_is_not_reported_as_found() {
+        // A symlink whose target does not exist is not an executable file, so
+        // the search must step over it exactly as it steps over a missing
+        // directory. A shell that resolves paths without handling the failure
+        // would crash here.
+        let sandbox = Sandbox::new();
+        sandbox.symlink(sandbox.root().join("no_such_target"), "bin/broken_tool");
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command("type broken_tool", "broken_tool: not found");
+        shell.expect_alive();
+    }
+
+    #[test]
+    fn a_dangling_symlink_does_not_mask_a_later_executable() {
+        let mut sandbox = Sandbox::new();
+        sandbox.symlink(sandbox.root().join("no_such_target"), "bin/shadowed");
+        let second = sandbox.mkdir("bin2");
+        let real = sandbox.install_executable_in(&second, "shadowed", "echo real");
+        sandbox.push_path_dir(&second);
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command("type shadowed", &format!("shadowed is {}", real.display()));
+    }
 }
 
 /// 01-base-08-ip1 — run external programs.
@@ -469,6 +551,45 @@ done"#,
         let mut shell = Session::spawn(&sandbox);
         shell.expect_prompt();
         shell.expect_command("inert", "inert: command not found");
+    }
+
+    #[test]
+    fn an_executable_behind_a_symlinked_path_entry_can_be_run() {
+        // A symlinked PATH entry is ordinary: /usr/bin is reached through one
+        // on macOS, and a Nix profile's bin is a symlink into the store. The
+        // program must be found and run through it.
+        let mut sandbox = Sandbox::new();
+        let real_dir = sandbox.mkdir("real/bin");
+        sandbox.install_executable_in(&real_dir, "linked_tool", "echo ran through link");
+        let link_dir = sandbox.symlink(&real_dir, "linkbin");
+        sandbox.push_path_dir(&link_dir);
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command("linked_tool", "ran through link");
+    }
+
+    #[test]
+    fn an_executable_that_is_itself_a_symlink_can_be_run() {
+        // The PATH entry is a real directory holding a symlink to the program.
+        let sandbox = Sandbox::new();
+        let store = sandbox.mkdir("store");
+        let target = sandbox.install_executable_in(&store, "actual_tool", "echo ran via alias");
+        sandbox.symlink(&target, "bin/aliased_tool");
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command("aliased_tool", "ran via alias");
+    }
+
+    #[test]
+    fn a_dangling_symlink_on_path_does_not_stop_the_shell() {
+        // A symlink with no target is not runnable, so the command is not
+        // found — and the shell must survive to serve the next prompt.
+        let sandbox = Sandbox::new();
+        sandbox.symlink(sandbox.root().join("no_such_target"), "bin/broken_tool");
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command("broken_tool", "broken_tool: command not found");
+        shell.expect_alive();
     }
 
     #[test]
