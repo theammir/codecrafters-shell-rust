@@ -17,16 +17,21 @@ pub enum BuiltinCommand {
     Exit,
     Echo,
     Type,
+    Pwd,
 }
 
 impl FromStr for BuiltinCommand {
     type Err = ();
 
+    // TODO: macro for a builtin command declaration maybe?
+    // #[builtin("pwd")]
+    // fn pwd_impl(arguments: Vec<String>) -> i8 {};
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "exit" => Self::Exit,
             "echo" => Self::Echo,
             "type" => Self::Type,
+            "pwd" => Self::Pwd,
             _ => Err(())?,
         })
     }
@@ -127,6 +132,13 @@ impl Execute for BuiltinCommandBody {
                         None => println!("{command_str}: not found"),
                     },
                 }
+                0
+            }
+            BuiltinCommand::Pwd => {
+                let Ok(pwd) = std::env::current_dir() else {
+                    return 1;
+                };
+                println!("{}", pwd.display());
                 0
             }
         }
