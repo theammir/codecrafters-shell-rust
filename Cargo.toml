@@ -7,6 +7,9 @@ rust-version = "1.95"
 
 [dependencies]
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = ">=0.59, <=0.61", features = ["Win32_Storage_FileSystem"] }
+
 # Integration-test harness only; never linked into the shell binary.
 [dev-dependencies]
 portable-pty = "0.9"
