@@ -4,6 +4,7 @@
 )]
 
 use std::{
+    ffi::OsStr,
     io::{self, Write},
     path::{Path, PathBuf},
     str::FromStr,
@@ -151,12 +152,16 @@ impl Execute for BuiltinCommandBody {
             BuiltinCommand::Cd => {
                 let new_pwd = self.arguments.get(1);
                 let new_pwd_display = new_pwd.cloned().unwrap_or_else(|| String::from("~"));
-                let new_pwd_path = self
-                    .arguments
-                    .get(1)
-                    .map_or_else(|| std::env::home_dir().unwrap_or_default(), PathBuf::from)
-                    .canonicalize();
-
+                let new_pwd_path = {
+                    let mut non_canonical = self
+                        .arguments
+                        .get(1)
+                        .map_or_else(|| std::env::home_dir().unwrap_or_default(), PathBuf::from);
+                    if non_canonical.as_os_str() == OsStr::new("~") {
+                        non_canonical = std::env::home_dir().unwrap_or_default();
+                    }
+                    non_canonical.canonicalize()
+                };
                 match new_pwd_path {
                     Ok(new_pwd) if new_pwd.is_dir() => std::env::set_current_dir(new_pwd)
                         .err()
