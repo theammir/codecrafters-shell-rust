@@ -1,3 +1,8 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "allow truncating i32 status code to i8"
+)]
+
 use std::{
     io::{self, Write},
     path::{Path, PathBuf},
@@ -18,6 +23,7 @@ pub enum BuiltinCommand {
     Echo,
     Type,
     Pwd,
+    Cd,
 }
 
 impl FromStr for BuiltinCommand {
@@ -32,6 +38,7 @@ impl FromStr for BuiltinCommand {
             "echo" => Self::Echo,
             "type" => Self::Type,
             "pwd" => Self::Pwd,
+            "cd" => Self::Cd,
             _ => Err(())?,
         })
     }
@@ -141,6 +148,22 @@ impl Execute for BuiltinCommandBody {
                 println!("{}", pwd.display());
                 0
             }
+            BuiltinCommand::Cd => {
+                let new_pwd = Path::new(self.arguments.get(1).map_or_else(|| "~", |v| v.as_str()));
+
+                if !new_pwd.is_absolute() {
+                    todo!();
+                }
+
+                if !new_pwd.exists() {
+                    println!("cd: {}: No such file or directory", new_pwd.display());
+                    return 1;
+                }
+
+                std::env::set_current_dir(new_pwd)
+                    .err()
+                    .map_or(0, |err| err.raw_os_error().unwrap_or(1)) as i8
+            }
         }
     }
 }
@@ -168,9 +191,7 @@ impl Execute for Command {
                 let output = handle.wait_with_output().unwrap();
 
                 // NOTE: doesn't handle signal termination
-                #[allow(clippy::cast_possible_truncation)] // unix behaviour anyway
-                let code = output.status.code().unwrap_or_default() as i8;
-                code
+                output.status.code().unwrap_or_default() as i8
             }
         }
     }
