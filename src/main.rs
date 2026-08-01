@@ -149,20 +149,32 @@ impl Execute for BuiltinCommandBody {
                 0
             }
             BuiltinCommand::Cd => {
-                let new_pwd = Path::new(self.arguments.get(1).map_or_else(|| "~", |v| v.as_str()));
+                let new_pwd = self.arguments.get(1);
+                let new_pwd_display = new_pwd.cloned().unwrap_or_else(|| String::from("~"));
+                let new_pwd_path = self
+                    .arguments
+                    .get(1)
+                    .map_or_else(|| std::env::home_dir().unwrap_or_default(), PathBuf::from)
+                    .canonicalize();
 
-                if !new_pwd.is_absolute() {
-                    todo!();
+                match new_pwd_path {
+                    Ok(new_pwd) if new_pwd.is_dir() => std::env::set_current_dir(new_pwd)
+                        .err()
+                        .map_or(0, |err| err.raw_os_error().unwrap_or(1))
+                        as i8,
+                    Ok(..) => {
+                        println!("cd: {new_pwd_display}: Not a directory");
+                        1
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                        println!("cd: {new_pwd_display}: No such file or directory");
+                        1
+                    }
+                    Err(err) => {
+                        println!("cd: {new_pwd_display}: {err}");
+                        1
+                    }
                 }
-
-                if !new_pwd.exists() {
-                    println!("cd: {}: No such file or directory", new_pwd.display());
-                    return 1;
-                }
-
-                std::env::set_current_dir(new_pwd)
-                    .err()
-                    .map_or(0, |err| err.raw_os_error().unwrap_or(1)) as i8
             }
         }
     }
