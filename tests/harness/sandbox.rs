@@ -186,6 +186,24 @@ impl Sandbox {
         set_mode(&path, 0o644);
         path
     }
+
+    /// Make a real system utility available on the sandbox `PATH` under `name`.
+    ///
+    /// Some stages exercise the shell against genuine programs — the quoting
+    /// stages use `cat` to prove that a parsed filename reaches `exec` intact.
+    /// A shell-script stand-in cannot do that faithfully (it would need to read
+    /// files without calling any external command, and would add newlines the
+    /// real utility does not), so the real binary is linked in instead.
+    ///
+    /// # Panics
+    /// If the utility cannot be found on the host.
+    pub fn install_system_executable(&self, name: &str) -> PathBuf {
+        let source = find_system_executable(name)
+            .unwrap_or_else(|| panic!("could not find `{name}` on the host system"));
+        let link = self.bin().join(name);
+        std::os::unix::fs::symlink(&source, &link).expect("failed to link system executable");
+        link
+    }
 }
 
 impl Default for Sandbox {
@@ -202,6 +220,18 @@ fn path_str(path: &Path) -> String {
     path.to_str()
         .unwrap_or_else(|| panic!("sandbox path is not utf-8: {}", path.display()))
         .to_string()
+}
+
+/// Locate a system utility on the host, independent of the sandbox `PATH`.
+///
+/// The usual system directories are searched directly rather than consulting
+/// the ambient `PATH`, so the result does not depend on how the test runner was
+/// invoked.
+fn find_system_executable(name: &str) -> Option<PathBuf> {
+    ["/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"]
+        .iter()
+        .map(|dir| Path::new(dir).join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 /// Whether a fixture body invokes a command that will not exist on the sandbox
