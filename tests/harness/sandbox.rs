@@ -149,6 +149,12 @@ impl Sandbox {
     ///
     /// Scripts are generated at runtime rather than committed, so the repository
     /// stays free of fixture binaries. `body` is the script after the shebang.
+    ///
+    /// The sandbox `PATH` contains only these fixtures, so a script body may use
+    /// shell builtins and parameter expansion but not external commands: a body
+    /// calling `basename` reports `basename: command not found` from inside the
+    /// fixture, which reads like a shell bug but is not one. Prefer `${0##*/}`
+    /// and friends.
     pub fn install_executable(&self, name: &str, body: &str) -> PathBuf {
         self.install_executable_in(&self.bin(), name, body)
     }
@@ -160,6 +166,11 @@ impl Sandbox {
         reason = "method for symmetry with install_executable; dir must be a sandbox path"
     )]
     pub fn install_executable_in(&self, dir: &Path, name: &str, body: &str) -> PathBuf {
+        assert!(
+            !mentions_external_command(body),
+            "fixture {name:?} calls an external command, but the sandbox PATH holds \
+             only fixtures; use a shell builtin or parameter expansion instead"
+        );
         std::fs::create_dir_all(dir).expect("failed to create bin directory");
         let path = dir.join(name);
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("failed to write executable");
@@ -191,6 +202,21 @@ fn path_str(path: &Path) -> String {
     path.to_str()
         .unwrap_or_else(|| panic!("sandbox path is not utf-8: {}", path.display()))
         .to_string()
+}
+
+/// Whether a fixture body invokes a command that will not exist on the sandbox
+/// `PATH`.
+///
+/// Deliberately a small denylist of the utilities a fixture is most likely to
+/// reach for, not a shell parser. It exists to turn a confusing runtime symptom
+/// (`basename: command not found` attributed to the shell under test) into a
+/// failure that names the real problem.
+fn mentions_external_command(body: &str) -> bool {
+    const EXTERNAL: [&str; 8] = [
+        "basename", "dirname", "cat", "ls", "grep", "sed", "awk", "env",
+    ];
+    body.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|word| EXTERNAL.contains(&word))
 }
 
 #[cfg(unix)]

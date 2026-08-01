@@ -488,11 +488,20 @@ mod base_08_ip1 {
     fn passes_arguments_to_the_program() {
         // The program receives its own name as argument 0 and the rest after,
         // which is what the stage's sample output reports.
+        //
+        // The fixture uses only shell builtins and `${0##*/}` rather than
+        // `basename`: the sandbox PATH holds nothing but the fake executables,
+        // so any external command the script calls is itself not found.
+        //
+        // argv[0] is stripped to its last component because the kernel rewrites
+        // it to the full script path when running a `#!` file, whatever the
+        // shell passed. Comparing the basename keeps the assertion about the
+        // shell's argument passing rather than about shebang mechanics.
         let sandbox = Sandbox::new();
         sandbox.install_executable(
             "custom_exe_1234",
             r#"echo "Program was passed $(($# + 1)) args (including program name)."
-echo "Arg #0 (program name): $(basename "$0")"
+echo "Arg #0 (program name): ${0##*/}"
 i=1
 for arg in "$@"; do
   echo "Arg #$i: $arg"
