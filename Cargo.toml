@@ -6,6 +6,7 @@ edition = "2024"
 rust-version = "1.95"
 
 [dependencies]
+regex = "1.13.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = ">=0.59, <=0.61", features = ["Win32_Storage_FileSystem"] }

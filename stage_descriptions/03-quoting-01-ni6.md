@@ -1,4 +1,4 @@
-In this stage, you'll implement support for [quoting](https://app.codecrafters.io/concepts/shell-quoting) with single quotes. 
+In this stage, you'll implement support for [quoting](https://app.codecrafters.io/concepts/shell-quoting) with single quotes.
 
 ### Single Quotes
 
@@ -14,11 +14,10 @@ Here are a few examples illustrating how single quotes behave:
 
 | Command | Expected output | Explanation |
 | :---: | :-------------: | :---------: |
-| <code style="white-space: pre;">echo 'hello    world'</code> | <code style="white-space: pre;">hello    world</code> | Spaces are preserved within quotes. |
-| <code style="white-space: pre;">echo hello    world</code> | `hello world` | Consecutive spaces are collapsed unless quoted. |
-| `echo 'hello''world'` | `helloworld` | Adjacent quoted strings `'hello'` and `'world'` are concatenated.
-| `echo hello''world` | `helloworld` | Empty quotes `''` are ignored.
-
+| `echo 'hello world'` | `hello world` | Spaces are preserved within quotes. |
+| `echo hello world` | `hello world` | Consecutive spaces are collapsed unless quoted. |
+| `echo 'hello''world'` | `helloworld` | Adjacent quoted strings `'hello'` and `'world'` are concatenated. |
+| `echo hello''world` | `helloworld` | Empty quotes `''` are ignored. |
 
 ### Tests
 

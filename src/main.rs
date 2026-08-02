@@ -10,6 +10,8 @@ use std::{
     str::FromStr,
 };
 
+use regex::Regex;
+
 use crate::is_executable::IsExecutable;
 
 pub mod is_executable;
@@ -89,7 +91,14 @@ impl FromStr for Command {
     type Err = ();
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let arguments: Vec<String> = input.split(' ').map(String::from).collect();
+        // https://regex101.com/r/ZykCiH/1
+        // i like it, i can remove single quotes within each match and get correct escaping.
+        // maybe worth reimplementing without dependencies
+        let arguments_pattern = Regex::new(r"(?:(?:\'.+?\'|\S+)\s*?)+").unwrap();
+        let arguments = arguments_pattern
+            .find_iter(input)
+            .map(|arg| arg.as_str().replace('\'', ""))
+            .collect::<Vec<_>>();
         let executable = arguments.first().unwrap();
 
         let maybe_builtin = BuiltinCommand::from_str(executable).ok();
