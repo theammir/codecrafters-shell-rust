@@ -87,31 +87,51 @@ fn resolve_executable_path(path: &Path) -> Option<PathBuf> {
         })
 }
 
-impl FromStr for Command {
-    type Err = ();
+impl Command {
+    /// Parse a prompt or a part of it into an executable command.
+    /// Caller assumes `input` is not empty, so panics here would mean that a real propmt can't be
+    /// parsed correctly.
+    fn parse(input: &str) -> Command {
+        // https://regex101.com/r/rOKKjk/1
+        let argument_split_pat = Regex::new(r#"(?:(?:'.+?'|".+?"|\S+)\s*?)+"#).unwrap();
+        // https://regex101.com/r/YxybRt/1
+        let argument_parse_pat = Regex::new(r#"(?:([^'"\n]+)|'([^'\n]*?)'|"([^"\n]*?)")"#).unwrap();
 
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        // https://regex101.com/r/ZykCiH/1
-        // i like it, i can remove single quotes within each match and get correct escaping.
-        // maybe worth reimplementing without dependencies
-        let arguments_pattern = Regex::new(r"(?:(?:\'.+?\'|\S+)\s*?)+").unwrap();
-        let arguments = arguments_pattern
+        // probably throwaway code, but it's funny how i can hide both the logics of parsing and the
+        // logics of stitching it together behind confusing regular expression stuff.
+        let arguments = argument_split_pat
             .find_iter(input)
-            .map(|arg| arg.as_str().replace('\'', ""))
+            .map(|arg| {
+                argument_parse_pat
+                    .captures_iter(arg.as_str())
+                    .map(|captures| {
+                        captures
+                            .iter()
+                            .skip(1)
+                            .flatten()
+                            .map(|m| m.as_str())
+                            .next()
+                            .unwrap_or_default()
+                    })
+                    .fold(String::new(), |mut arg, subarg| {
+                        arg.push_str(subarg);
+                        arg
+                    })
+            })
             .collect::<Vec<_>>();
         let executable = arguments.first().unwrap();
 
         let maybe_builtin = BuiltinCommand::from_str(executable).ok();
         if let Some(builtin) = maybe_builtin {
-            Ok(Command::Builtin(BuiltinCommandBody {
+            Command::Builtin(BuiltinCommandBody {
                 cmd_type: builtin,
                 arguments,
-            }))
+            })
         } else {
-            Ok(Command::Executable(ExecutableCommandBody {
+            Command::Executable(ExecutableCommandBody {
                 executable_path: resolve_executable_path(Path::new(executable)),
                 arguments,
-            }))
+            })
         }
     }
 }
@@ -141,7 +161,7 @@ impl Execute for BuiltinCommandBody {
                 let Some(command_str) = self.arguments.get(1) else {
                     return 1;
                 };
-                let command = Command::from_str(command_str).unwrap();
+                let command = Command::parse(command_str);
                 match command {
                     Command::Builtin(..) => println!("{command_str} is a shell builtin"),
                     Command::Executable(body) => match body.executable_path {
@@ -230,17 +250,18 @@ fn main() {
         io::stdout().flush().unwrap();
 
         io::stdin().read_line(&mut input).unwrap();
-        input = input.trim_end().to_string();
+        let trimmed = input.trim_end();
 
-        if input.is_empty() {
+        if trimmed.is_empty() {
             continue;
         }
 
-        let command = input.parse::<Command>().unwrap();
+        let command = Command::parse(trimmed);
         let code = command.execute();
         if code == -127 {
             break;
         }
+        drop(command);
         input.clear();
     }
 }
