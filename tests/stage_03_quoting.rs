@@ -195,6 +195,57 @@ mod quoting_02_tg6 {
     }
 
     #[test]
+    fn the_two_quote_styles_concatenate_within_one_argument() {
+        // Both quoting stages state that adjacent quoted and unquoted strings
+        // concatenate; neither restricts that to a single quote style.
+        let (mut shell, _sandbox) = Session::new();
+        shell.expect_prompt();
+        shell.expect_command("echo \"one\"'two'three''four", "onetwothreefour");
+        shell.expect_command("echo 'one'\"two\"", "onetwo");
+        shell.expect_command("echo one\"two\"'three'", "onetwothree");
+    }
+
+    #[test]
+    fn empty_quotes_of_either_style_vanish_between_words() {
+        let (mut shell, _sandbox) = Session::new();
+        shell.expect_prompt();
+        shell.expect_command("echo a\"\"b", "ab");
+        shell.expect_command("echo a''\"\"b", "ab");
+    }
+
+    #[test]
+    fn concatenation_preserves_spaces_from_every_piece() {
+        // The joined pieces keep their own internal spacing, and the result is
+        // still one argument: the unquoted `c` cannot be split off.
+        let (mut shell, _sandbox) = Session::new();
+        shell.expect_prompt();
+        shell.expect_command("echo 'a  b'\"  c  \"d", "a  b  c  d");
+    }
+
+    #[test]
+    fn mixed_quote_concatenation_builds_a_single_filename() {
+        // Proven through `cat`: only one argument can name this file, so the
+        // three differently quoted pieces must have become one word.
+        let sandbox = Sandbox::new();
+        sandbox.install_system_executable("cat");
+        let dir = sandbox.mkdir("files");
+        sandbox.write_file("files/mixed 'name' here", "content1");
+        let mut shell = Session::spawn(&sandbox);
+        shell.expect_prompt();
+        shell.expect_command(
+            &format!("cat '{}/mixed '\"'name'\"' here'", dir.display()),
+            "content1",
+        );
+    }
+
+    #[test]
+    fn each_quote_style_is_literal_inside_the_other_when_concatenated() {
+        let (mut shell, _sandbox) = Session::new();
+        shell.expect_prompt();
+        shell.expect_command("echo \"it's\"'a \"test\"'", "it'sa \"test\"");
+    }
+
+    #[test]
     fn a_quoted_argument_can_follow_an_unquoted_one() {
         let (mut shell, _sandbox) = Session::new();
         shell.expect_prompt();
