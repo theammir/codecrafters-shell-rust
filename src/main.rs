@@ -4,6 +4,7 @@
 )]
 
 use std::{
+    borrow::Cow,
     ffi::OsStr,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -92,10 +93,16 @@ impl Command {
     /// Caller assumes `input` is not empty, so panics here would mean that a real propmt can't be
     /// parsed correctly.
     fn parse(input: &str) -> Command {
-        // https://regex101.com/r/rOKKjk/1
-        let argument_split_pat = Regex::new(r#"(?:(?:'.+?'|".+?"|\S+)\s*?)+"#).unwrap();
-        // https://regex101.com/r/YxybRt/1
-        let argument_parse_pat = Regex::new(r#"(?:([^'"\n]+)|'([^'\n]*?)'|"([^"\n]*?)")"#).unwrap();
+        // https://regex101.com/r/rOKKjk/2
+        let argument_split_pat =
+            Regex::new(r#"(?:(?:'.+?'|".+?"|(?:\S+?(?:\\\S)*(?:\\\s)*))\s*?)+"#).unwrap();
+        // https://regex101.com/r/YxybRt/2
+        // i am literally going insane lmao
+        let argument_parse_pat = Regex::new(
+            r#"(?:(?<noq>(?:\\['"\s])?[^'"\s]+[^'"\s\\](?:\\['"\s])?)|'(?<singleq>[^'\r\n]*?)'|"(?<doubleq>[^"\r\n]*?)")"#,
+        )
+        .unwrap();
+        let backslash_escape_pat = Regex::new(r"\\(.)").unwrap();
 
         // probably throwaway code, but it's funny how i can hide both the logics of parsing and the
         // logics of stitching it together behind confusing regular expression stuff.
@@ -105,16 +112,23 @@ impl Command {
                 argument_parse_pat
                     .captures_iter(arg.as_str())
                     .map(|captures| {
-                        captures
-                            .iter()
-                            .skip(1)
-                            .flatten()
-                            .map(|m| m.as_str())
-                            .next()
-                            .unwrap_or_default()
+                        if let Some(unquoted) = captures.name("noq").map(|m| m.as_str()) {
+                            backslash_escape_pat.replace_all(unquoted, "$1")
+                        } else if let Some(single_quoted) =
+                            captures.name("singleq").map(|m| m.as_str())
+                        {
+                            Cow::Borrowed(single_quoted)
+                        } else {
+                            Cow::Borrowed(
+                                captures
+                                    .name("doubleq")
+                                    .map(|m| m.as_str())
+                                    .unwrap_or_default(),
+                            )
+                        }
                     })
                     .fold(String::new(), |mut arg, subarg| {
-                        arg.push_str(subarg);
+                        arg.push_str(subarg.as_ref());
                         arg
                     })
             })
