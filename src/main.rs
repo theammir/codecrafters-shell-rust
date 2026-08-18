@@ -202,14 +202,15 @@ impl Execute for Command {
                 0
             }
             Self::Executable(ExecutableCommandBody {
-                executable_path: Some(executable_path),
+                executable_path: Some(_executable_path),
                 arguments,
             }) => {
-                let mut command = std::process::Command::new(executable_path);
+                let executable = &arguments[0];
+                let mut command = std::process::Command::new(executable);
                 command.args(arguments.iter().skip(1));
                 let handle = command
                     .spawn()
-                    .unwrap_or_else(|_| panic!("failed to spawn \"{}\"", arguments[0]));
+                    .unwrap_or_else(|_| panic!("failed to spawn \"{executable}\""));
                 let output = handle.wait_with_output().unwrap();
 
                 // NOTE: doesn't handle signal termination
