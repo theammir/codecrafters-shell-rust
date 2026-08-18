@@ -2,7 +2,7 @@ In this stage, you'll implement support for backslashes within single quotes.
 
 ### Backslashes in Single Quotes
 
-Backslashes have no special escaping behavior inside [single quotes](https://www.gnu.org/software/bash/manual/bash.html#Single-Quotes). Every character (including backslashes) within single quotes is treated literally.
+Backslashes have no special escaping behavior inside [single quotes](https://www.gnu.org/software/bash/manual/bash.html#Single-Quotes). Every character (including backslashes) within single quotes is treated literally. 
 
 For example:
 
@@ -33,8 +33,8 @@ every\"thing_is\"literal
 
 The tester will check if the `echo` command correctly prints the quoted text.
 
-Next, the tester will send a `cat` command, with the file name parameters consisting of backslashes inside single quotes:
 
+Next, the tester will send a `cat` command, with the file name parameters consisting of backslashes inside single quotes:
 ```bash
 $ cat /tmp/'no slash 1' /tmp/'one slash \2' /tmp/'two slashes \3\'
 content1 content2 content3
